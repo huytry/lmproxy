@@ -27,8 +27,10 @@ $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 
 // CORS for Tampermonkey and browser-origin calls
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Session-Name, X-Target-Domain');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Session-Name, X-Target-Domain, X-Provider, X-Client-ID, X-Request-ID, X-LMArena-Session-ID, X-LMArena-Message-ID');
+header('Access-Control-Expose-Headers: X-Request-ID, X-Client-ID, X-Response-Time');
+header('Access-Control-Max-Age: 86400'); // Cache preflight for 24 hours
 if ($method === 'OPTIONS') {
     http_response_code(204);
     exit;
