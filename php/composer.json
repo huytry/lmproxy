@@ -1,0 +1,41 @@
+{
+    "name": "lmarena/ai-gateway",
+    "description": "PHP-based AI API gateway for LMArenaBridge with session management and domain isolation",
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "LMArena Gateway Team",
+            "email": "support@example.com"
+        }
+    ],
+    "require": {
+        "php": ">=7.4",
+        "ext-curl": "*",
+        "ext-json": "*",
+        "ext-mbstring": "*"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "GatewayApp\\": "app/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "GatewayApp\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "optimize-autoloader": true,
+        "sort-packages": true
+    },
+    "scripts": {
+        "test": "phpunit",
+        "cleanup-sessions": "php scripts/cleanup-sessions.php"
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

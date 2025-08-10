@@ -1,0 +1,42 @@
+# apisix/apisix.yaml
+# Example declarative config for Apache APISIX to front the PHP gateway and protect it
+# Adjust upstream hosts, SSL, and plugins to your environment.
+
+routes:
+  - uri: /v1/*
+    name: openai-endpoints
+    methods: [GET, POST, OPTIONS]
+    upstream:
+      type: roundrobin
+      nodes:
+        127.0.0.1:8080: 1  # PHP gateway web server (Apache/Nginx) listening port
+    plugins:
+      cors: {}
+  - uri: /session/*
+    name: session-management
+    methods: [GET, POST, OPTIONS]
+    upstream:
+      type: roundrobin
+      nodes:
+        127.0.0.1:8080: 1
+    plugins:
+      cors: {}
+  - uri: /userscript/*
+    name: userscript
+    methods: [GET]
+    upstream:
+      type: roundrobin
+      nodes:
+        127.0.0.1:8080: 1
+    plugins:
+      cors: {}
+
+# Optionally expose a health endpoint
+  - uri: /health
+    name: health
+    methods: [GET]
+    upstream:
+      type: roundrobin
+      nodes:
+        127.0.0.1:8080: 1
+

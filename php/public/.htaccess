@@ -1,0 +1,18 @@
+# php/public/.htaccess
+# Simple front-controller rewrite for the PHP gateway
+
+<IfModule mod_rewrite.c>
+  Options -MultiViews
+  RewriteEngine On
+
+  # Skip existing files and directories
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+
+  # Route everything to index.php
+  RewriteRule ^ index.php [QSA,L]
+</IfModule>
+
+# Recommended for Server-Sent Events streaming
+Header set Cache-Control "no-cache"
+
