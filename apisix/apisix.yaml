@@ -1,6 +1,6 @@
 # apisix/apisix.yaml
 # Enhanced Apache APISIX configuration for LMArena AI Gateway
-# Includes yupp2Api integration, Flask services, and advanced routing
+# Includes LMArenaBridge integration, Flask services, and advanced routing
 
 # Global configuration
 apisix:

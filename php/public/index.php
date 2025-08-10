@@ -4,11 +4,11 @@
 
 use GatewayApp\Config;
 use GatewayApp\SessionStore;
-use GatewayApp\Yupp2ApiProvider;
+use GatewayApp\LMArenaBridgeProvider;
 
 require_once __DIR__ . '/../app/Config.php';
 require_once __DIR__ . '/../app/SessionStore.php';
-require_once __DIR__ . '/../app/Yupp2ApiProvider.php';
+require_once __DIR__ . '/../app/LMArenaBridgeProvider.php';
 
 // Error reporting for production
 error_reporting(E_ERROR | E_WARNING | E_PARSE);
@@ -70,7 +70,7 @@ function logError(string $message, array $context = []): void {
 
 try {
     $store = new SessionStore();
-    $yupp2Api = new Yupp2ApiProvider();
+    $lmarenaBridge = new LMArenaBridgeProvider();
 } catch (Exception $e) {
     logError('Failed to initialize services', ['error' => $e->getMessage()]);
     errorResponse('Service temporarily unavailable', 503, 'STORAGE_ERROR');
@@ -84,15 +84,15 @@ if ($path === '/health') {
         'time' => gmdate('c'),
         'services' => [
             'session_store' => 'healthy',
-            'yupp2_api' => $yupp2Api->isEnabled() ? 'enabled' : 'disabled'
+            'lmarena_bridge' => $lmarenaBridge->isEnabled() ? 'enabled' : 'disabled'
         ]
     ];
 
-    // Check yupp2Api health if enabled
-    if ($yupp2Api->isEnabled()) {
-        $yupp2Health = $yupp2Api->healthCheck();
-        $health['services']['yupp2_api'] = $yupp2Health['status'];
-        $health['yupp2_api_details'] = $yupp2Health;
+    // Check LMArenaBridge health if enabled
+    if ($lmarenaBridge->isEnabled()) {
+        $bridgeHealth = $lmarenaBridge->healthCheck();
+        $health['services']['lmarena_bridge'] = $bridgeHealth['status'];
+        $health['lmarena_bridge_details'] = $bridgeHealth;
     }
 
     jsonResponse($health);
@@ -102,12 +102,13 @@ if ($path === '/health') {
 // Provider status endpoint
 if ($path === '/providers/status' && $method === 'GET') {
     $providers = [
-        'lmarena_bridge' => [
+        'lmarena_bridge_legacy' => [
             'enabled' => true,
             'base_url' => Config::defaultBridgeBaseUrl(),
-            'has_api_key' => !empty(Config::defaultBridgeApiKey())
+            'has_api_key' => !empty(Config::defaultBridgeApiKey()),
+            'type' => 'legacy_websocket'
         ],
-        'yupp2_api' => $yupp2Api->getConfig()
+        'lmarena_bridge_direct' => $lmarenaBridge->getConfig()
     ];
 
     jsonResponse($providers);
@@ -361,7 +362,7 @@ if ($path === '/v1/chat/completions' && $method === 'POST') {
         // Session selection strategy
         $sessionName = trim($_SERVER['HTTP_X_SESSION_NAME'] ?? ($_SERVER['HTTP_X_SESSION_ID'] ?? 'default'));
         $targetDomain = trim($_SERVER['HTTP_X_TARGET_DOMAIN'] ?? 'lmarena.ai');
-        $preferredProvider = trim($_SERVER['HTTP_X_PROVIDER'] ?? 'auto'); // auto, lmarena, yupp2api
+        $preferredProvider = trim($_SERVER['HTTP_X_PROVIDER'] ?? 'auto'); // auto, lmarena, bridge_direct
 
         if (!validateDomain($targetDomain)) {
             errorResponse('X-Target-Domain not allowed: ' . $targetDomain, 400, 'INVALID_DOMAIN');
@@ -373,31 +374,35 @@ if ($path === '/v1/chat/completions' && $method === 'POST') {
             exit;
         }
 
-        // Provider selection logic
-        $useYupp2Api = false;
-        if ($preferredProvider === 'yupp2api' && $yupp2Api->isEnabled()) {
-            $useYupp2Api = true;
-        } elseif ($preferredProvider === 'auto') {
-            // Auto-select based on model or availability
-            $model = $openaiReq['model'] ?? '';
-            if ($yupp2Api->isEnabled() && (strpos($model, 'yupp2') !== false || strpos($model, 'claude') !== false)) {
-                $useYupp2Api = true;
+        // Provider selection logic - check if we should use direct LMArenaBridge integration
+        $useBridgeDirect = false;
+        $model = $openaiReq['model'] ?? '';
+
+        if ($preferredProvider === 'bridge_direct' && $lmarenaBridge->isEnabled()) {
+            $useBridgeDirect = true;
+        } elseif ($preferredProvider === 'auto' && $lmarenaBridge->isEnabled()) {
+            // Auto-select based on model availability in LMArenaBridge
+            if ($lmarenaBridge->hasModel($model)) {
+                $useBridgeDirect = true;
             }
         }
 
-        // Route to yupp2Api if selected
-        if ($useYupp2Api) {
+        // Route to direct LMArenaBridge if selected and model is available
+        if ($useBridgeDirect && $lmarenaBridge->hasModel($model)) {
             try {
+                // Get session mapping for the model
+                $sessionMapping = $lmarenaBridge->getSessionMapping($model);
+
                 if ($openaiReq['stream'] ?? true) {
-                    $yupp2Api->streamRequest('/v1/chat/completions', $openaiReq);
+                    $lmarenaBridge->streamChatCompletion($openaiReq, $sessionMapping ?: []);
                 } else {
-                    $result = $yupp2Api->forwardRequest('/v1/chat/completions', $openaiReq);
+                    $result = $lmarenaBridge->chatCompletion($openaiReq, $sessionMapping ?: []);
                     jsonResponse($result);
                 }
                 exit;
             } catch (Exception $e) {
-                logError('yupp2Api request failed, falling back to LMArenaBridge', ['error' => $e->getMessage()]);
-                // Fall through to LMArenaBridge
+                logError('Direct LMArenaBridge request failed, falling back to legacy WebSocket bridge', ['error' => $e->getMessage()]);
+                // Fall through to legacy WebSocket LMArenaBridge
             }
         }
 
@@ -773,6 +778,59 @@ JS;
       json_encode($registerUrl, JSON_UNESCAPED_SLASHES)
     );
     exit;
+}
+
+// OpenAI-compatible models endpoint
+// GET /v1/models
+if ($path === '/v1/models' && $method === 'GET') {
+    try {
+        $models = [];
+
+        // Add models from direct LMArenaBridge integration
+        if ($lmarenaBridge->isEnabled()) {
+            $bridgeModels = $lmarenaBridge->getModels();
+            if (isset($bridgeModels['data'])) {
+                $models = array_merge($models, $bridgeModels['data']);
+            }
+        }
+
+        // Add fallback models for legacy WebSocket bridge
+        $legacyModels = [
+            'gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo', 'claude-3-opus',
+            'claude-3-sonnet', 'claude-3-haiku', 'gemini-pro'
+        ];
+
+        foreach ($legacyModels as $modelName) {
+            // Only add if not already present from direct bridge
+            $exists = false;
+            foreach ($models as $existingModel) {
+                if ($existingModel['id'] === $modelName) {
+                    $exists = true;
+                    break;
+                }
+            }
+
+            if (!$exists) {
+                $models[] = [
+                    'id' => $modelName,
+                    'object' => 'model',
+                    'created' => time(),
+                    'owned_by' => 'LMArenaBridge-Legacy'
+                ];
+            }
+        }
+
+        jsonResponse([
+            'object' => 'list',
+            'data' => $models
+        ]);
+        exit;
+
+    } catch (Exception $e) {
+        logError('Models endpoint failed', ['error' => $e->getMessage()]);
+        errorResponse('Failed to retrieve models', 500, 'INTERNAL_ERROR');
+        exit;
+    }
 }
 
 // Not found

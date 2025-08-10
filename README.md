@@ -7,12 +7,12 @@ A comprehensive PHP-based AI API gateway system with Apache APISIX integration, 
 ### Core Components
 - **PHP API Gateway**: High-performance OpenAI-compatible API gateway
 - **Apache APISIX Integration**: Enterprise-grade API management and routing
-- **yupp2Api Provider**: Seamless integration with yupp2Api AI services
+- **LMArenaBridge Integration**: Direct integration with LMArenaBridge for LMArena.ai access
 - **Flask Auxiliary Services**: Advanced analytics and userscript generation
 - **Enhanced Session Management**: Multi-session concurrent support with domain isolation
 
 ### Advanced Capabilities
-- **Multi-Provider Routing**: Automatic routing between LMArenaBridge and yupp2Api
+- **Multi-Provider Routing**: Intelligent routing between legacy WebSocket and direct LMArenaBridge
 - **Domain-Specific Isolation**: Separate sessions for lmarena.ai, canary.lmarena.ai, alpha.lmarena.ai, beta.lmarena.ai
 - **Concurrent Session Support**: Multiple sessions per user in the same browser
 - **Auto-Generated Userscripts**: Dynamic Tampermonkey script generation with persistence
@@ -32,8 +32,8 @@ A comprehensive PHP-based AI API gateway system with Apache APISIX integration, 
          │                        │                        │             │
          ▼                        ▼                        ▼             ▼
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐    ┌──────────────┐
-│ Tampermonkey    │    │  LMArenaBridge   │    │   yupp2Api      │    │ Flask        │
-│ Userscripts     │    │  (WebSocket)     │    │   Provider      │    │ Services     │
+│ Tampermonkey    │    │  LMArenaBridge   │    │ LMArenaBridge   │    │ Flask        │
+│ Userscripts     │    │  (Legacy WS)     │    │ (Direct API)    │    │ Services     │
 │ (Auto-generated)│    │                  │    │                 │    │ (Analytics)  │
 └─────────────────┘    └──────────────────┘    └─────────────────┘    └──────────────┘
 ```
@@ -113,16 +113,17 @@ cp apisix/apisix.yaml /path/to/apisix/conf/
 ### Environment Variables
 
 ```bash
-# Core LMArenaBridge
+# LMArenaBridge Legacy WebSocket
 LMARENA_BRIDGE_BASE_URL=http://127.0.0.1:5102
 LMARENA_BRIDGE_API_KEY=your_bridge_key
 
-# yupp2Api Provider
-YUPP2_API_ENABLED=true
-YUPP2_API_BASE_URL=http://127.0.0.1:5103
-YUPP2_API_KEY=your_yupp2_key
-YUPP2_API_TIMEOUT=30
-YUPP2_API_RETRY_ATTEMPTS=3
+# LMArenaBridge Direct Integration
+LMARENA_BRIDGE_ENABLED=true
+LMARENA_BRIDGE_WS_URL=ws://127.0.0.1:5102/ws
+LMARENA_BRIDGE_TIMEOUT=180
+LMARENA_BRIDGE_MODELS_FILE=../LMArenaBridge/models.json
+LMARENA_BRIDGE_CONFIG_FILE=../LMArenaBridge/config.jsonc
+LMARENA_BRIDGE_MODEL_MAP_FILE=../LMArenaBridge/model_endpoint_map.json
 
 # Flask Services
 FLASK_SERVICES_ENABLED=true
@@ -153,7 +154,7 @@ Headers:
   Authorization: Bearer your-api-key
   X-Session-Name: session-name
   X-Target-Domain: lmarena.ai
-  X-Provider: auto|lmarena|yupp2api
+  X-Provider: auto|lmarena|bridge_direct
 
 # Image generation
 POST /v1/images/generations
@@ -232,13 +233,13 @@ curl -X POST https://your-domain.com/api/v1/chat/completions \
 ### 2. Provider-Specific Routing
 
 ```bash
-# Force yupp2Api provider
+# Force direct LMArenaBridge integration
 curl -X POST https://your-domain.com/api/v1/chat/completions \
-  -H "X-Provider: yupp2api" \
-  -H "X-Session-Name: yupp2-session" \
-  -d '{"model": "claude-3", "messages": [...]}'
+  -H "X-Provider: bridge_direct" \
+  -H "X-Session-Name: bridge-session" \
+  -d '{"model": "gpt-4", "messages": [...]}'
 
-# Force LMArenaBridge
+# Force legacy WebSocket LMArenaBridge
 curl -X POST https://your-domain.com/api/v1/chat/completions \
   -H "X-Provider: lmarena" \
   -H "X-Session-Name: lmarena-session" \

@@ -2,7 +2,7 @@
 
 ## 🎯 Project Overview
 
-Successfully implemented a comprehensive PHP-based AI API gateway system with Apache APISIX integration, yupp2Api provider support, and advanced session management for LMArena platforms, fully optimized for cPanel hosting deployment.
+Successfully implemented a comprehensive PHP-based AI API gateway system with Apache APISIX integration, enhanced LMArenaBridge provider support, and advanced session management for LMArena platforms, fully optimized for cPanel hosting deployment.
 
 ## ✅ Completed Features
 
@@ -15,12 +15,12 @@ Successfully implemented a comprehensive PHP-based AI API gateway system with Ap
 - **Session Management**: Concurrent sessions, domain isolation, persistence
 - **OpenAI Compatibility**: Full OpenAI API compatibility with provider routing
 
-#### ✅ yupp2Api Provider Integration
-- **Automatic Provider Selection**: Based on model names or explicit headers
-- **Fallback Logic**: Graceful fallback from yupp2Api to LMArenaBridge
-- **Streaming Support**: Real-time streaming responses
+#### ✅ Enhanced LMArenaBridge Integration
+- **Direct API Integration**: Direct HTTP API integration with LMArenaBridge
+- **Legacy WebSocket Support**: Maintains compatibility with existing WebSocket bridge
+- **Model Configuration Loading**: Automatic loading of models.json and configuration files
+- **Session Mapping**: Advanced session and message ID mapping for LMArena
 - **Health Monitoring**: Provider health checks and status reporting
-- **Retry Mechanism**: Exponential backoff for failed requests
 
 #### ✅ Flask Auxiliary Services (`flask_services/`)
 - **Advanced Analytics**: Session analytics with detailed breakdowns
@@ -112,7 +112,7 @@ lmarena-gateway/
 │   ├── app/
 │   │   ├── Config.php ✅ (Enhanced)
 │   │   ├── SessionStore.php ✅ (Existing)
-│   │   └── Yupp2ApiProvider.php ✅ (New)
+│   │   └── LMArenaBridgeProvider.php ✅ (New)
 │   ├── public/
 │   │   └── index.php ✅ (Enhanced)
 │   └── .env.example ✅ (Enhanced)
@@ -160,12 +160,13 @@ lmarena-gateway/
 
 ### Environment Variables Added
 ```bash
-# yupp2Api Provider
-YUPP2_API_ENABLED=true
-YUPP2_API_BASE_URL=http://127.0.0.1:5103
-YUPP2_API_KEY=your_api_key
-YUPP2_API_TIMEOUT=30
-YUPP2_API_RETRY_ATTEMPTS=3
+# LMArenaBridge Direct Integration
+LMARENA_BRIDGE_ENABLED=true
+LMARENA_BRIDGE_WS_URL=ws://127.0.0.1:5102/ws
+LMARENA_BRIDGE_TIMEOUT=180
+LMARENA_BRIDGE_MODELS_FILE=../LMArenaBridge/models.json
+LMARENA_BRIDGE_CONFIG_FILE=../LMArenaBridge/config.jsonc
+LMARENA_BRIDGE_MODEL_MAP_FILE=../LMArenaBridge/model_endpoint_map.json
 
 # Flask Services
 FLASK_SERVICES_ENABLED=true
@@ -186,10 +187,10 @@ curl -X POST /v1/chat/completions \
   -H "X-Provider: auto" \
   -H "X-Session-Name: my-session"
 
-# Force yupp2Api
+# Force direct LMArenaBridge
 curl -X POST /v1/chat/completions \
-  -H "X-Provider: yupp2api" \
-  -H "X-Session-Name: yupp2-session"
+  -H "X-Provider: bridge_direct" \
+  -H "X-Session-Name: bridge-session"
 ```
 
 ### Enhanced Session Management
@@ -246,7 +247,7 @@ API_KEY="your-key" \
 ✅ **100% Requirements Met**:
 - ✅ PHP-based AI API gateway
 - ✅ Apache APISIX integration
-- ✅ yupp2Api provider integration
+- ✅ Enhanced LMArenaBridge integration
 - ✅ Multi-session concurrent support
 - ✅ Domain-specific session isolation
 - ✅ cPanel deployment optimization

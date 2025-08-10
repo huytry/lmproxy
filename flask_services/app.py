@@ -188,7 +188,7 @@ def generate_enhanced_userscript(session_name: str, gateway_url: str, domain_fil
                                enable_analytics: bool, auto_retry: bool, debug_mode: bool) -> str:
     """Generate enhanced Tampermonkey userscript"""
     
-    # Domain matching logic
+    # Domain matching logic for LMArena domains
     if domain_filter == 'all':
         match_patterns = [
             "https://lmarena.ai/*",
@@ -198,7 +198,7 @@ def generate_enhanced_userscript(session_name: str, gateway_url: str, domain_fil
     else:
         match_patterns = [f"https://{domain_filter}/*"]
         allowed_domains = [domain_filter]
-    
+
     match_lines = '\n'.join(f'// @match        {pattern}' for pattern in match_patterns)
     allowed_domains_js = json.dumps(allowed_domains)
     
@@ -229,7 +229,8 @@ def generate_enhanced_userscript(session_name: str, gateway_url: str, domain_fil
         DEBUG_MODE: {str(debug_mode).lower()},
         MAX_RETRY_ATTEMPTS: 3,
         RETRY_DELAY_MS: 2000,
-        HEARTBEAT_INTERVAL_MS: 30000
+        HEARTBEAT_INTERVAL_MS: 30000,
+        LMARENA_INTEGRATION: true
     }};
     
     // State management
