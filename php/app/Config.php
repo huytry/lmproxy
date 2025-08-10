@@ -41,5 +41,38 @@ class Config
             'beta.lmarena.ai',
         ];
     }
+
+    // yupp2Api provider configuration
+    public static function yupp2ApiConfig(): array
+    {
+        return [
+            'enabled' => getenv('YUPP2_API_ENABLED') === 'true',
+            'base_url' => getenv('YUPP2_API_BASE_URL') ?: 'http://127.0.0.1:5103',
+            'api_key' => getenv('YUPP2_API_KEY') ?: null,
+            'timeout' => (int)(getenv('YUPP2_API_TIMEOUT') ?: 30),
+            'retry_attempts' => (int)(getenv('YUPP2_API_RETRY_ATTEMPTS') ?: 3),
+        ];
+    }
+
+    // Flask auxiliary services configuration
+    public static function flaskConfig(): array
+    {
+        return [
+            'enabled' => getenv('FLASK_SERVICES_ENABLED') === 'true',
+            'base_url' => getenv('FLASK_SERVICES_BASE_URL') ?: 'http://127.0.0.1:5104',
+            'api_key' => getenv('FLASK_SERVICES_API_KEY') ?: null,
+        ];
+    }
+
+    // Enhanced session management configuration
+    public static function sessionConfig(): array
+    {
+        return [
+            'max_sessions_per_domain' => (int)(getenv('GATEWAY_MAX_SESSIONS_PER_DOMAIN') ?: 100),
+            'session_cleanup_days' => (int)(getenv('GATEWAY_SESSION_CLEANUP_DAYS') ?: 30),
+            'enable_session_analytics' => getenv('GATEWAY_ENABLE_SESSION_ANALYTICS') === 'true',
+            'concurrent_sessions_limit' => (int)(getenv('GATEWAY_CONCURRENT_SESSIONS_LIMIT') ?: 10),
+        ];
+    }
 }
 
