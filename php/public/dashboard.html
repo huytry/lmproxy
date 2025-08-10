@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LMArena Gateway - Client Management Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 1rem 2rem;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+            overflow: hidden;
+        }
+        
+        .card-header {
+            background: #34495e;
+            color: white;
+            padding: 1rem 1.5rem;
+            font-weight: 600;
+        }
+        
+        .card-body {
+            padding: 1.5rem;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+        
+        .stat-label {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+        
+        .btn {
+            background: #3498db;
+            color: white;
+            border: none;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            text-decoration: none;
+            display: inline-block;
+            transition: background 0.2s;
+        }
+        
+        .btn:hover {
+            background: #2980b9;
+        }
+        
+        .btn-success {
+            background: #27ae60;
+        }
+        
+        .btn-success:hover {
+            background: #229954;
+        }
+        
+        .btn-danger {
+            background: #e74c3c;
+        }
+        
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+        
+        .btn-sm {
+            padding: 0.5rem 1rem;
+            font-size: 0.8rem;
+        }
+        
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .table th,
+        .table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .table th {
+            background: #f8f9fa;
+            font-weight: 600;
+        }
+        
+        .status {
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        
+        .status-active {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-unhealthy {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+        }
+        
+        .modal-content {
+            background: white;
+            margin: 5% auto;
+            padding: 2rem;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+        
+        .close {
+            color: #aaa;
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        
+        .close:hover {
+            color: #000;
+        }
+        
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+        
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+        
+        .alert {
+            padding: 1rem;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+        
+        .actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 0 1rem;
+            }
+            
+            .stats-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .table {
+                font-size: 0.8rem;
+            }
+            
+            .actions {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🚀 LMArena Gateway - Client Management Dashboard</h1>
+    </div>
+
+    <div class="container">
+        <!-- Statistics Overview -->
+        <div class="card">
+            <div class="card-header">
+                📊 Platform Statistics
+            </div>
+            <div class="card-body">
+                <div class="stats-grid" id="statsGrid">
+                    <div class="loading">Loading statistics...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Client Registration -->
+        <div class="card">
+            <div class="card-header">
+                ➕ Register New Client
+            </div>
+            <div class="card-body">
+                <button class="btn btn-success" onclick="showRegisterModal()">
+                    Register New Client
+                </button>
+                <p style="margin-top: 1rem; color: #666; font-size: 0.9rem;">
+                    Register a new LMArenaBridge client instance to connect to this platform.
+                </p>
+            </div>
+        </div>
+
+        <!-- Client Management -->
+        <div class="card">
+            <div class="card-header">
+                🖥️ Connected Clients
+                <button class="btn btn-sm" onclick="refreshClients()" style="float: right;">
+                    🔄 Refresh
+                </button>
+            </div>
+            <div class="card-body">
+                <div id="clientsTable">
+                    <div class="loading">Loading clients...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Registration Modal -->
+    <div id="registerModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeRegisterModal()">&times;</span>
+            <h2>Register New Client</h2>
+            <div id="registerAlert"></div>
+            <form id="registerForm">
+                <div class="form-group">
+                    <label for="clientName">Client Name *</label>
+                    <input type="text" id="clientName" name="name" required 
+                           placeholder="e.g., John's LMArenaBridge">
+                </div>
+                <div class="form-group">
+                    <label for="clientEmail">Email (Optional)</label>
+                    <input type="email" id="clientEmail" name="email" 
+                           placeholder="client@example.com">
+                </div>
+                <div class="form-group">
+                    <label for="bridgeUrl">LMArenaBridge URL *</label>
+                    <input type="url" id="bridgeUrl" name="lmarena_bridge_url" 
+                           value="http://127.0.0.1:5102" required>
+                </div>
+                <div class="form-group">
+                    <label for="rateLimit">Rate Limit (requests/minute)</label>
+                    <input type="number" id="rateLimit" name="rate_limit" 
+                           value="60" min="1" max="1000">
+                </div>
+                <div class="form-group">
+                    <label for="dailyLimit">Daily Limit (requests/day)</label>
+                    <input type="number" id="dailyLimit" name="daily_limit" 
+                           value="1000" min="1" max="100000">
+                </div>
+                <div class="form-group">
+                    <button type="submit" class="btn btn-success">
+                        Register Client
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Client Details Modal -->
+    <div id="clientModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeClientModal()">&times;</span>
+            <div id="clientDetails">
+                <div class="loading">Loading client details...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global state
+        let clients = [];
+        let stats = {};
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', function() {
+            loadStats();
+            loadClients();
+            
+            // Auto-refresh every 30 seconds
+            setInterval(() => {
+                loadStats();
+                loadClients();
+            }, 30000);
+        });
+
+        // Load platform statistics
+        async function loadStats() {
+            try {
+                const response = await fetch('/api/providers/status');
+                const data = await response.json();
+                
+                if (data.distributed_clients) {
+                    stats = data.distributed_clients.routing_stats;
+                    renderStats();
+                }
+            } catch (error) {
+                console.error('Failed to load stats:', error);
+            }
+        }
+
+        // Render statistics
+        function renderStats() {
+            const statsGrid = document.getElementById('statsGrid');
+            
+            statsGrid.innerHTML = `
+                <div class="stat-card">
+                    <div class="stat-value">${stats.total_clients || 0}</div>
+                    <div class="stat-label">Total Clients</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${stats.active_clients || 0}</div>
+                    <div class="stat-label">Active Clients</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${stats.total_requests || 0}</div>
+                    <div class="stat-label">Total Requests</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value">${stats.success_rate || 0}%</div>
+                    <div class="stat-label">Success Rate</div>
+                </div>
+            `;
+        }
+
+        // Load clients
+        async function loadClients() {
+            try {
+                const response = await fetch('/api/clients');
+                const data = await response.json();
+                
+                clients = data.clients || [];
+                renderClients();
+            } catch (error) {
+                console.error('Failed to load clients:', error);
+                document.getElementById('clientsTable').innerHTML = 
+                    '<div class="alert alert-error">Failed to load clients</div>';
+            }
+        }
+
+        // Render clients table
+        function renderClients() {
+            const container = document.getElementById('clientsTable');
+            
+            if (clients.length === 0) {
+                container.innerHTML = '<p>No clients registered yet.</p>';
+                return;
+            }
+
+            const table = `
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Status</th>
+                            <th>Requests</th>
+                            <th>Success Rate</th>
+                            <th>Last Seen</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${clients.map(clientInfo => {
+                            const client = clientInfo.client;
+                            const stats = clientInfo.stats;
+                            const successRate = stats.total_requests > 0 
+                                ? Math.round((stats.successful_requests / stats.total_requests) * 100)
+                                : 0;
+                            
+                            return `
+                                <tr>
+                                    <td>
+                                        <strong>${client.name}</strong><br>
+                                        <small style="color: #666;">${client.client_id}</small>
+                                    </td>
+                                    <td>
+                                        <span class="status status-${client.status}">
+                                            ${client.status}
+                                        </span>
+                                    </td>
+                                    <td>${stats.total_requests || 0}</td>
+                                    <td>${successRate}%</td>
+                                    <td>
+                                        ${client.last_seen 
+                                            ? new Date(client.last_seen).toLocaleString()
+                                            : 'Never'
+                                        }
+                                    </td>
+                                    <td>
+                                        <div class="actions">
+                                            <button class="btn btn-sm" 
+                                                    onclick="showClientDetails('${client.client_id}')">
+                                                View
+                                            </button>
+                                            <button class="btn btn-sm btn-success" 
+                                                    onclick="downloadClientPackage('${client.client_id}')">
+                                                Download
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            `;
+            
+            container.innerHTML = table;
+        }
+
+        // Show registration modal
+        function showRegisterModal() {
+            document.getElementById('registerModal').style.display = 'block';
+        }
+
+        // Close registration modal
+        function closeRegisterModal() {
+            document.getElementById('registerModal').style.display = 'none';
+            document.getElementById('registerForm').reset();
+            document.getElementById('registerAlert').innerHTML = '';
+        }
+
+        // Handle registration form
+        document.getElementById('registerForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(e.target);
+            const data = Object.fromEntries(formData.entries());
+            
+            try {
+                const response = await fetch('/api/clients/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    document.getElementById('registerAlert').innerHTML = 
+                        '<div class="alert alert-success">Client registered successfully!</div>';
+                    
+                    // Show client package details
+                    showClientPackageDetails(result);
+                    
+                    // Refresh clients list
+                    setTimeout(() => {
+                        loadClients();
+                        closeRegisterModal();
+                    }, 3000);
+                } else {
+                    throw new Error(result.error || 'Registration failed');
+                }
+            } catch (error) {
+                document.getElementById('registerAlert').innerHTML = 
+                    `<div class="alert alert-error">Error: ${error.message}</div>`;
+            }
+        });
+
+        // Show client package details
+        function showClientPackageDetails(result) {
+            const alertDiv = document.getElementById('registerAlert');
+            const clientPackage = result.client_package;
+            
+            alertDiv.innerHTML = `
+                <div class="alert alert-success">
+                    <h3>Client Registered Successfully!</h3>
+                    <p><strong>Client ID:</strong> ${clientPackage.client_id}</p>
+                    <p><strong>API Key:</strong> <code>${clientPackage.api_key}</code></p>
+                    <p><strong>Platform URL:</strong> ${clientPackage.platform_url}</p>
+                    <br>
+                    <button class="btn btn-success" onclick="downloadClientPackage('${clientPackage.client_id}')">
+                        Download Client Package
+                    </button>
+                </div>
+            `;
+        }
+
+        // Download client package
+        function downloadClientPackage(clientId) {
+            window.open(`/api/clients/${clientId}/download`, '_blank');
+        }
+
+        // Show client details
+        async function showClientDetails(clientId) {
+            document.getElementById('clientModal').style.display = 'block';
+            
+            try {
+                const response = await fetch(`/api/clients/${clientId}`);
+                const data = await response.json();
+                
+                const client = data.client;
+                const stats = data.stats;
+                
+                document.getElementById('clientDetails').innerHTML = `
+                    <h2>Client Details</h2>
+                    <div class="form-group">
+                        <label>Name:</label>
+                        <p>${client.name}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Client ID:</label>
+                        <p><code>${client.client_id}</code></p>
+                    </div>
+                    <div class="form-group">
+                        <label>Status:</label>
+                        <p><span class="status status-${client.status}">${client.status}</span></p>
+                    </div>
+                    <div class="form-group">
+                        <label>LMArenaBridge URL:</label>
+                        <p>${client.lmarena_bridge_url}</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Statistics:</label>
+                        <ul>
+                            <li>Total Requests: ${stats.total_requests || 0}</li>
+                            <li>Successful: ${stats.successful_requests || 0}</li>
+                            <li>Failed: ${stats.failed_requests || 0}</li>
+                            <li>Average Response Time: ${Math.round(stats.average_response_time || 0)}ms</li>
+                            <li>Health Status: ${stats.health_status || 'unknown'}</li>
+                        </ul>
+                    </div>
+                    <div class="form-group">
+                        <button class="btn btn-success" onclick="downloadClientPackage('${client.client_id}')">
+                            Download Client Package
+                        </button>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('clientDetails').innerHTML = 
+                    '<div class="alert alert-error">Failed to load client details</div>';
+            }
+        }
+
+        // Close client modal
+        function closeClientModal() {
+            document.getElementById('clientModal').style.display = 'none';
+        }
+
+        // Refresh clients
+        function refreshClients() {
+            loadClients();
+            loadStats();
+        }
+
+        // Close modals when clicking outside
+        window.onclick = function(event) {
+            const registerModal = document.getElementById('registerModal');
+            const clientModal = document.getElementById('clientModal');
+            
+            if (event.target === registerModal) {
+                closeRegisterModal();
+            }
+            if (event.target === clientModal) {
+                closeClientModal();
+            }
+        }
+    </script>
+</body>
+</html>

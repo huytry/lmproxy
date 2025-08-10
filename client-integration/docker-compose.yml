@@ -1,0 +1,186 @@
+# Docker Compose configuration for LMArenaBridge Client
+# This allows running the client in a containerized environment
+
+version: '3.8'
+
+services:
+  lmarena-bridge-client:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lmarena-bridge-client
+    restart: unless-stopped
+    
+    # Port mapping
+    ports:
+      - "5102:5102"  # LMArenaBridge API port
+      - "5103:5103"  # ID updater port
+    
+    # Environment variables
+    environment:
+      # Platform Integration
+      - PLATFORM_INTEGRATION_ENABLED=true
+      - PLATFORM_URL=${PLATFORM_URL:-https://your-domain.com/api}
+      - CLIENT_ID=${CLIENT_ID:-your-client-id}
+      - API_KEY=${API_KEY:-your-api-key}
+      
+      # LMArenaBridge Configuration
+      - LMARENA_SESSION_ID=${LMARENA_SESSION_ID:-YOUR_SESSION_ID_HERE}
+      - LMARENA_MESSAGE_ID=${LMARENA_MESSAGE_ID:-YOUR_MESSAGE_ID_HERE}
+      
+      # Performance Settings
+      - STREAM_TIMEOUT=${STREAM_TIMEOUT:-360}
+      - HEARTBEAT_INTERVAL=${HEARTBEAT_INTERVAL:-30}
+      - MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS:-10}
+      
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENABLE_REQUEST_LOGGING=${ENABLE_REQUEST_LOGGING:-true}
+      
+      # Python settings
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+    
+    # Volume mounts
+    volumes:
+      # Configuration files
+      - ./config.jsonc:/app/config.jsonc:ro
+      - ./models.json:/app/models.json:rw
+      - ./model_endpoint_map.json:/app/model_endpoint_map.json:rw
+      - ./available_models.json:/app/available_models.json:rw
+      
+      # Platform integration
+      - ./lmarena_platform_integration.py:/app/lmarena_platform_integration.py:ro
+      
+      # Persistent data
+      - lmarena_data:/app/data
+      - lmarena_logs:/app/logs
+      - lmarena_storage:/app/storage
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5102/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    
+    # Network configuration
+    networks:
+      - lmarena_network
+
+  # Optional: Monitoring with Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: lmarena-prometheus
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - lmarena_network
+
+  # Optional: Grafana for visualization
+  grafana:
+    image: grafana/grafana:latest
+    container_name: lmarena-grafana
+    restart: unless-stopped
+    profiles:
+      - monitoring
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - lmarena_network
+
+  # Optional: Redis for caching and session management
+  redis:
+    image: redis:7-alpine
+    container_name: lmarena-redis
+    restart: unless-stopped
+    profiles:
+      - caching
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - lmarena_network
+
+  # Optional: Nginx reverse proxy
+  nginx:
+    image: nginx:alpine
+    container_name: lmarena-nginx
+    restart: unless-stopped
+    profiles:
+      - proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - lmarena-bridge-client
+    networks:
+      - lmarena_network
+
+# Networks
+networks:
+  lmarena_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volumes
+volumes:
+  lmarena_data:
+    driver: local
+  lmarena_logs:
+    driver: local
+  lmarena_storage:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  redis_data:
+    driver: local
+  nginx_logs:
+    driver: local
