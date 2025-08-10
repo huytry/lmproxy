@@ -78,7 +78,9 @@ RewriteRule ^(.*)$ index.php [QSA,L]
 # Enable CORS
 Header always set Access-Control-Allow-Origin "*"
 Header always set Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS"
-Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Requested-With, X-Session-Name, X-Target-Domain, X-Provider"
+Header always set Access-Control-Allow-Headers "Content-Type, Authorization, X-Session-Name, X-Target-Domain, X-Provider, X-Client-ID, X-Request-ID, X-LMArena-Session-ID, X-LMArena-Message-ID"
+Header always set Access-Control-Expose-Headers "X-Request-ID, X-Client-ID, X-Response-Time"
+Header always set Access-Control-Max-Age "86400"
 ```
 
 ### 3. Set Permissions
@@ -256,7 +258,25 @@ POST /api/clients/health
 
 # Platform statistics
 GET /api/providers/status
+
+# Enhanced chat completions with distributed routing
+POST /api/v1/chat/completions
 ```
+
+### Request Headers
+
+- `X-Provider`: Provider selection (`auto`, `distributed`, `bridge_direct`, `lmarena`)
+- `X-Session-Name`: Session identifier for request routing
+- `X-Target-Domain`: Target LMArena domain
+- `X-Client-ID`: Specific client routing (optional)
+- `X-LMArena-Session-ID`: LMArena session ID override
+- `X-LMArena-Message-ID`: LMArena message ID override
+
+### Response Headers
+
+- `X-Request-ID`: Unique request identifier
+- `X-Client-ID`: Client that processed the request
+- `X-Response-Time`: Processing time in milliseconds
 
 ### Client Monitoring
 
