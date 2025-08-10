@@ -199,7 +199,7 @@ run_test "Invalid Session Name Format" \
 log_info "Testing OpenAI API Compatibility..."
 
 CHAT_DATA="{\"model\":\"gpt-4\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello\"}],\"stream\":false}"
-HEADERS="-H \"Content-Type: application/json\" -H \"X-Session-Name: $TEST_SESSION_NAME\" -H \"X-Target-Domain: lmarena.ai\""
+HEADERS="-H \"Content-Type: application/json\" -H \"X-Session-Name: $TEST_SESSION_NAME\" -H \"X-Target-Domain: lmarena.ai\" -H \"X-Provider: bridge_direct\""
 
 if [ -n "$API_KEY" ]; then
     HEADERS="$HEADERS -H \"Authorization: Bearer $API_KEY\""

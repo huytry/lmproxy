@@ -1,0 +1,83 @@
+// LMArenaBridge Configuration with Platform Integration
+// Generated for distributed architecture deployment
+// Copy this file to your LMArenaBridge directory as config.jsonc
+
+{
+    // Basic LMArenaBridge Configuration
+    "version": "2.0.0",
+    "session_id": "YOUR_SESSION_ID_HERE",
+    "message_id": "YOUR_MESSAGE_ID_HERE",
+    "id_updater_last_mode": "direct_chat",
+    "id_updater_battle_target": "A",
+    "api_key": null,
+    
+    // LMArenaBridge Features
+    "tavern_mode_enabled": false,
+    "bypass_enabled": false,
+    "enable_auto_update": true,
+    "enable_idle_restart": false,
+    "idle_restart_timeout_seconds": 300,
+    "stream_response_timeout_seconds": 360,
+    "use_default_ids_if_mapping_not_found": true,
+    
+    // Platform Integration Settings
+    "platform_integration": {
+        "enabled": true,
+        "platform_url": "https://your-platform-domain.com/api",
+        "client_id": "CLIENT_ID_PLACEHOLDER",
+        "api_key": "API_KEY_PLACEHOLDER",
+        
+        // Connection Settings
+        "heartbeat_interval_seconds": 30,
+        "request_timeout_seconds": 300,
+        "retry_attempts": 3,
+        "reconnect_delay_seconds": 5,
+        "max_reconnect_attempts": 10,
+        
+        // Client Capabilities
+        "capabilities": ["chat", "models", "images"],
+        
+        // Health Check Settings
+        "health_check_endpoint": "/health",
+        "health_check_interval_seconds": 60,
+        
+        // Request Handling
+        "max_concurrent_requests": 10,
+        "request_queue_size": 100,
+        
+        // Logging and Monitoring
+        "enable_request_logging": true,
+        "enable_performance_monitoring": true,
+        "log_level": "INFO"
+    },
+    
+    // Advanced Platform Features
+    "platform_features": {
+        // Request routing preferences
+        "preferred_routing_strategy": "least_load", // least_load, round_robin, random
+        
+        // Rate limiting (enforced by platform)
+        "rate_limit_requests_per_minute": 60,
+        "rate_limit_requests_per_day": 1000,
+        
+        // Caching settings
+        "enable_response_caching": false,
+        "cache_ttl_seconds": 300,
+        
+        // Security settings
+        "enable_request_validation": true,
+        "allowed_origins": ["*"],
+        
+        // Performance optimization
+        "enable_compression": true,
+        "connection_pool_size": 10
+    },
+    
+    // Local Development Settings
+    "development": {
+        "debug_mode": false,
+        "mock_lmarena_responses": false,
+        "local_testing_port": 5102,
+        "enable_cors": true
+    }
+}

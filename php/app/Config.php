@@ -42,15 +42,18 @@ class Config
         ];
     }
 
-    // yupp2Api provider configuration
-    public static function yupp2ApiConfig(): array
+    // LMArenaBridge integration configuration
+    public static function lmarenaBridgeConfig(): array
     {
         return [
-            'enabled' => getenv('YUPP2_API_ENABLED') === 'true',
-            'base_url' => getenv('YUPP2_API_BASE_URL') ?: 'http://127.0.0.1:5103',
-            'api_key' => getenv('YUPP2_API_KEY') ?: null,
-            'timeout' => (int)(getenv('YUPP2_API_TIMEOUT') ?: 30),
-            'retry_attempts' => (int)(getenv('YUPP2_API_RETRY_ATTEMPTS') ?: 3),
+            'enabled' => getenv('LMARENA_BRIDGE_ENABLED') !== 'false', // enabled by default
+            'websocket_url' => getenv('LMARENA_BRIDGE_WS_URL') ?: 'ws://127.0.0.1:5102/ws',
+            'api_base_url' => getenv('LMARENA_BRIDGE_BASE_URL') ?: 'http://127.0.0.1:5102',
+            'api_key' => getenv('LMARENA_BRIDGE_API_KEY') ?: null,
+            'timeout' => (int)(getenv('LMARENA_BRIDGE_TIMEOUT') ?: 180),
+            'models_file' => getenv('LMARENA_BRIDGE_MODELS_FILE') ?: '../LMArenaBridge/models.json',
+            'config_file' => getenv('LMARENA_BRIDGE_CONFIG_FILE') ?: '../LMArenaBridge/config.jsonc',
+            'model_endpoint_map_file' => getenv('LMARENA_BRIDGE_MODEL_MAP_FILE') ?: '../LMArenaBridge/model_endpoint_map.json',
         ];
     }
 

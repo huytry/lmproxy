@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CORS Headers Test - Distributed Architecture</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-section {
+            background: #f5f5f5;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>🧪 CORS Headers Test - Distributed Architecture</h1>
+    
+    <div class="test-section info">
+        <h3>Test Configuration</h3>
+        <p>This page tests the CORS headers for the distributed LMArena Gateway architecture.</p>
+        <p><strong>Platform URL:</strong> <input type="text" id="platformUrl" value="https://your-domain.com/api" style="width: 300px;"></p>
+    </div>
+
+    <div class="test-section">
+        <h3>1. Test OPTIONS Preflight Request</h3>
+        <p>Tests if the server properly handles preflight requests with custom headers.</p>
+        <button onclick="testPreflight()">Test Preflight</button>
+        <div id="preflightResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>2. Test Provider Status with X-Provider Header</h3>
+        <p>Tests the new X-Provider header functionality.</p>
+        <button onclick="testProviderStatus()">Test Provider Status</button>
+        <div id="providerResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>3. Test Client Registration</h3>
+        <p>Tests client registration with custom headers.</p>
+        <button onclick="testClientRegistration()">Test Registration</button>
+        <div id="registrationResult"></div>
+    </div>
+
+    <div class="test-section">
+        <h3>4. Test Chat Completions with Distributed Routing</h3>
+        <p>Tests the main chat completions endpoint with distributed provider selection.</p>
+        <button onclick="testChatCompletions()">Test Chat Completions</button>
+        <div id="chatResult"></div>
+    </div>
+
+    <script>
+        function getPlatformUrl() {
+            return document.getElementById('platformUrl').value.replace(/\/$/, '');
+        }
+
+        function displayResult(elementId, success, message, details = null) {
+            const element = document.getElementById(elementId);
+            const className = success ? 'success' : 'error';
+            let html = `<div class="${className}"><strong>${success ? '✅ Success' : '❌ Error'}:</strong> ${message}</div>`;
+            
+            if (details) {
+                html += `<pre>${JSON.stringify(details, null, 2)}</pre>`;
+            }
+            
+            element.innerHTML = html;
+        }
+
+        async function testPreflight() {
+            const url = getPlatformUrl() + '/v1/chat/completions';
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'OPTIONS',
+                    headers: {
+                        'Origin': 'https://example.com',
+                        'Access-Control-Request-Method': 'POST',
+                        'Access-Control-Request-Headers': 'Content-Type, Authorization, X-Provider, X-Client-ID'
+                    }
+                });
+
+                const headers = {};
+                for (let [key, value] of response.headers.entries()) {
+                    if (key.startsWith('access-control-')) {
+                        headers[key] = value;
+                    }
+                }
+
+                const hasRequiredHeaders = 
+                    headers['access-control-allow-origin'] &&
+                    headers['access-control-allow-methods'] &&
+                    headers['access-control-allow-headers'] &&
+                    headers['access-control-allow-headers'].includes('X-Provider');
+
+                displayResult('preflightResult', hasRequiredHeaders, 
+                    hasRequiredHeaders ? 'Preflight request successful' : 'Missing required CORS headers',
+                    { status: response.status, headers });
+
+            } catch (error) {
+                displayResult('preflightResult', false, 'Preflight request failed', { error: error.message });
+            }
+        }
+
+        async function testProviderStatus() {
+            const url = getPlatformUrl() + '/providers/status';
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'X-Provider': 'distributed',
+                        'X-Client-ID': 'test-client'
+                    }
+                });
+
+                const data = await response.json();
+                const hasDistributedInfo = data.distributed_clients !== undefined;
+
+                displayResult('providerResult', response.ok && hasDistributedInfo,
+                    response.ok ? 'Provider status retrieved successfully' : 'Failed to get provider status',
+                    { status: response.status, data });
+
+            } catch (error) {
+                displayResult('providerResult', false, 'Provider status request failed', { error: error.message });
+            }
+        }
+
+        async function testClientRegistration() {
+            const url = getPlatformUrl() + '/clients/register';
+            
+            const testData = {
+                name: 'CORS Test Client',
+                email: 'test@example.com',
+                lmarena_bridge_url: 'http://127.0.0.1:5102',
+                rate_limit: 10,
+                daily_limit: 100
+            };
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Provider': 'distributed',
+                        'X-Request-ID': 'test-' + Date.now()
+                    },
+                    body: JSON.stringify(testData)
+                });
+
+                const data = await response.json();
+                
+                displayResult('registrationResult', response.ok,
+                    response.ok ? 'Client registration successful' : 'Client registration failed',
+                    { status: response.status, data });
+
+            } catch (error) {
+                displayResult('registrationResult', false, 'Client registration request failed', { error: error.message });
+            }
+        }
+
+        async function testChatCompletions() {
+            const url = getPlatformUrl() + '/v1/chat/completions';
+            
+            const testData = {
+                model: 'gpt-4o',
+                messages: [
+                    { role: 'user', content: 'Hello, this is a CORS test!' }
+                ],
+                stream: false
+            };
+
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer test-key',
+                        'X-Provider': 'distributed',
+                        'X-Session-Name': 'cors-test',
+                        'X-Target-Domain': 'lmarena.ai'
+                    },
+                    body: JSON.stringify(testData)
+                });
+
+                const responseHeaders = {};
+                for (let [key, value] of response.headers.entries()) {
+                    if (key.startsWith('x-')) {
+                        responseHeaders[key] = value;
+                    }
+                }
+
+                let data;
+                try {
+                    data = await response.json();
+                } catch {
+                    data = await response.text();
+                }
+
+                displayResult('chatResult', response.status < 500,
+                    `Chat completions request completed (${response.status})`,
+                    { 
+                        status: response.status, 
+                        responseHeaders,
+                        data: typeof data === 'string' ? data.substring(0, 200) + '...' : data 
+                    });
+
+            } catch (error) {
+                displayResult('chatResult', false, 'Chat completions request failed', { error: error.message });
+            }
+        }
+
+        // Auto-detect platform URL if running on the same domain
+        window.addEventListener('load', function() {
+            if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+                const detectedUrl = `${window.location.protocol}//${window.location.hostname}/api`;
+                document.getElementById('platformUrl').value = detectedUrl;
+            }
+        });
+    </script>
+</body>
+</html>

@@ -173,12 +173,13 @@ configure_environment() {
 LMARENA_BRIDGE_BASE_URL=http://127.0.0.1:5102
 LMARENA_BRIDGE_API_KEY=
 
-# yupp2Api Configuration
-YUPP2_API_ENABLED=true
-YUPP2_API_BASE_URL=http://127.0.0.1:5103
-YUPP2_API_KEY=
-YUPP2_API_TIMEOUT=30
-YUPP2_API_RETRY_ATTEMPTS=3
+# LMArenaBridge Direct Integration Configuration
+LMARENA_BRIDGE_ENABLED=true
+LMARENA_BRIDGE_WS_URL=ws://127.0.0.1:5102/ws
+LMARENA_BRIDGE_TIMEOUT=180
+LMARENA_BRIDGE_MODELS_FILE=../LMArenaBridge/models.json
+LMARENA_BRIDGE_CONFIG_FILE=../LMArenaBridge/config.jsonc
+LMARENA_BRIDGE_MODEL_MAP_FILE=../LMArenaBridge/model_endpoint_map.json
 
 # Flask Services Configuration
 FLASK_SERVICES_ENABLED=true

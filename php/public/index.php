@@ -4,11 +4,17 @@
 
 use GatewayApp\Config;
 use GatewayApp\SessionStore;
-use GatewayApp\Yupp2ApiProvider;
+use GatewayApp\LMArenaBridgeProvider;
+use GatewayApp\ClientManager;
+use GatewayApp\RequestRouter;
+use GatewayApp\ClientConfigGenerator;
 
 require_once __DIR__ . '/../app/Config.php';
 require_once __DIR__ . '/../app/SessionStore.php';
-require_once __DIR__ . '/../app/Yupp2ApiProvider.php';
+require_once __DIR__ . '/../app/LMArenaBridgeProvider.php';
+require_once __DIR__ . '/../app/ClientManager.php';
+require_once __DIR__ . '/../app/RequestRouter.php';
+require_once __DIR__ . '/../app/ClientConfigGenerator.php';
 
 // Error reporting for production
 error_reporting(E_ERROR | E_WARNING | E_PARSE);
@@ -21,8 +27,10 @@ $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
 
 // CORS for Tampermonkey and browser-origin calls
 header('Access-Control-Allow-Origin: *');
-header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
-header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Session-Name, X-Target-Domain');
+header('Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, Authorization, X-Session-Name, X-Target-Domain, X-Provider, X-Client-ID, X-Request-ID, X-LMArena-Session-ID, X-LMArena-Message-ID');
+header('Access-Control-Expose-Headers: X-Request-ID, X-Client-ID, X-Response-Time');
+header('Access-Control-Max-Age: 86400'); // Cache preflight for 24 hours
 if ($method === 'OPTIONS') {
     http_response_code(204);
     exit;
@@ -62,6 +70,25 @@ function validateUuid(string $uuid): bool {
     return preg_match('/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/', $uuid);
 }
 
+function getFileMimeType(string $fileName): string
+{
+    $extension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+
+    $mimeTypes = [
+        'json' => 'application/json',
+        'jsonc' => 'application/json',
+        'py' => 'text/x-python',
+        'md' => 'text/markdown',
+        'yml' => 'text/yaml',
+        'yaml' => 'text/yaml',
+        'sh' => 'text/x-shellscript',
+        'txt' => 'text/plain',
+        'js' => 'text/javascript'
+    ];
+
+    return $mimeTypes[$extension] ?? 'text/plain';
+}
+
 function logError(string $message, array $context = []): void {
     $timestamp = gmdate('Y-m-d H:i:s');
     $contextStr = $context ? ' ' . json_encode($context, JSON_UNESCAPED_SLASHES) : '';
@@ -70,7 +97,14 @@ function logError(string $message, array $context = []): void {
 
 try {
     $store = new SessionStore();
-    $yupp2Api = new Yupp2ApiProvider();
+    $lmarenaBridge = new LMArenaBridgeProvider();
+    $clientManager = new ClientManager();
+    $requestRouter = new RequestRouter($clientManager, [
+        'request_timeout' => (int)(getenv('GATEWAY_REQUEST_TIMEOUT') ?: 300),
+        'retry_attempts' => (int)(getenv('GATEWAY_RETRY_ATTEMPTS') ?: 3),
+        'load_balancing_strategy' => getenv('GATEWAY_LOAD_BALANCING') ?: 'least_load'
+    ]);
+    $configGenerator = new ClientConfigGenerator();
 } catch (Exception $e) {
     logError('Failed to initialize services', ['error' => $e->getMessage()]);
     errorResponse('Service temporarily unavailable', 503, 'STORAGE_ERROR');
@@ -84,15 +118,15 @@ if ($path === '/health') {
         'time' => gmdate('c'),
         'services' => [
             'session_store' => 'healthy',
-            'yupp2_api' => $yupp2Api->isEnabled() ? 'enabled' : 'disabled'
+            'lmarena_bridge' => $lmarenaBridge->isEnabled() ? 'enabled' : 'disabled'
         ]
     ];
 
-    // Check yupp2Api health if enabled
-    if ($yupp2Api->isEnabled()) {
-        $yupp2Health = $yupp2Api->healthCheck();
-        $health['services']['yupp2_api'] = $yupp2Health['status'];
-        $health['yupp2_api_details'] = $yupp2Health;
+    // Check LMArenaBridge health if enabled
+    if ($lmarenaBridge->isEnabled()) {
+        $bridgeHealth = $lmarenaBridge->healthCheck();
+        $health['services']['lmarena_bridge'] = $bridgeHealth['status'];
+        $health['lmarena_bridge_details'] = $bridgeHealth;
     }
 
     jsonResponse($health);
@@ -102,16 +136,186 @@ if ($path === '/health') {
 // Provider status endpoint
 if ($path === '/providers/status' && $method === 'GET') {
     $providers = [
-        'lmarena_bridge' => [
+        'lmarena_bridge_legacy' => [
             'enabled' => true,
             'base_url' => Config::defaultBridgeBaseUrl(),
-            'has_api_key' => !empty(Config::defaultBridgeApiKey())
+            'has_api_key' => !empty(Config::defaultBridgeApiKey()),
+            'type' => 'legacy_websocket'
         ],
-        'yupp2_api' => $yupp2Api->getConfig()
+        'lmarena_bridge_direct' => $lmarenaBridge->getConfig(),
+        'distributed_clients' => [
+            'enabled' => true,
+            'total_clients' => count($clientManager->getAllClients()),
+            'routing_stats' => $requestRouter->getRoutingStats()
+        ]
     ];
 
     jsonResponse($providers);
     exit;
+}
+
+// Client registration endpoint
+if ($path === '/clients/register' && $method === 'POST') {
+    try {
+        $data = getJsonBody();
+
+        $requiredFields = ['name', 'lmarena_bridge_url'];
+        foreach ($requiredFields as $field) {
+            if (empty($data[$field])) {
+                errorResponse("Field '$field' is required", 400, 'MISSING_FIELD');
+                exit;
+            }
+        }
+
+        // Validate LMArenaBridge URL
+        if (!filter_var($data['lmarena_bridge_url'], FILTER_VALIDATE_URL)) {
+            errorResponse('Invalid LMArenaBridge URL', 400, 'INVALID_URL');
+            exit;
+        }
+
+        $result = $clientManager->registerClient($data);
+
+        // Generate client package
+        $clientPackage = $configGenerator->generateClientPackage($result);
+
+        jsonResponse([
+            'registration' => $result,
+            'client_package' => $clientPackage
+        ]);
+        exit;
+
+    } catch (Exception $e) {
+        logError('Client registration failed', ['error' => $e->getMessage()]);
+        errorResponse('Failed to register client', 500, 'REGISTRATION_ERROR');
+        exit;
+    }
+}
+
+// Client management endpoints
+if (preg_match('#^/clients/([^/]+)$#', $path, $matches) && $method === 'GET') {
+    $clientId = $matches[1];
+    $client = $clientManager->getClient($clientId);
+
+    if (!$client) {
+        errorResponse('Client not found', 404, 'CLIENT_NOT_FOUND');
+        exit;
+    }
+
+    jsonResponse([
+        'client' => $client,
+        'stats' => $clientManager->getAllClients()
+    ]);
+    exit;
+}
+
+// List all clients
+if ($path === '/clients' && $method === 'GET') {
+    $clients = $clientManager->getAllClients();
+    jsonResponse([
+        'clients' => $clients,
+        'total' => count($clients)
+    ]);
+    exit;
+}
+
+// Client health check endpoint
+if ($path === '/clients/health' && $method === 'POST') {
+    try {
+        $healthResults = $requestRouter->performHealthChecks();
+        jsonResponse([
+            'health_checks' => $healthResults,
+            'checked_at' => gmdate('c')
+        ]);
+        exit;
+
+    } catch (Exception $e) {
+        logError('Health check failed', ['error' => $e->getMessage()]);
+        errorResponse('Failed to perform health checks', 500, 'HEALTH_CHECK_ERROR');
+        exit;
+    }
+}
+
+// Client configuration download
+if (preg_match('#^/clients/([^/]+)/download/([^/]+)$#', $path, $matches) && $method === 'GET') {
+    $clientId = $matches[1];
+    $fileName = $matches[2];
+
+    $client = $clientManager->getClient($clientId);
+    if (!$client) {
+        errorResponse('Client not found', 404, 'CLIENT_NOT_FOUND');
+        exit;
+    }
+
+    try {
+        $clientPackage = $configGenerator->generateClientPackage($client);
+
+        if (!isset($clientPackage['files'][$fileName])) {
+            errorResponse('File not found', 404, 'FILE_NOT_FOUND');
+            exit;
+        }
+
+        $content = $clientPackage['files'][$fileName];
+        $mimeType = getFileMimeType($fileName);
+
+        header("Content-Type: $mimeType");
+        header("Content-Disposition: attachment; filename=\"$fileName\"");
+        header('Content-Length: ' . strlen($content));
+
+        echo $content;
+        exit;
+
+    } catch (Exception $e) {
+        logError('File download failed', ['error' => $e->getMessage(), 'client_id' => $clientId, 'file' => $fileName]);
+        errorResponse('Failed to generate file', 500, 'FILE_GENERATION_ERROR');
+        exit;
+    }
+}
+
+// Client package download (ZIP)
+if (preg_match('#^/clients/([^/]+)/download$#', $path, $matches) && $method === 'GET') {
+    $clientId = $matches[1];
+
+    $client = $clientManager->getClient($clientId);
+    if (!$client) {
+        errorResponse('Client not found', 404, 'CLIENT_NOT_FOUND');
+        exit;
+    }
+
+    try {
+        $clientPackage = $configGenerator->generateClientPackage($client);
+
+        // Create temporary ZIP file
+        $tempFile = tempnam(sys_get_temp_dir(), 'lmarena_client_');
+        $zip = new ZipArchive();
+
+        if ($zip->open($tempFile, ZipArchive::CREATE) !== TRUE) {
+            throw new Exception('Cannot create ZIP file');
+        }
+
+        // Add all files to ZIP
+        foreach ($clientPackage['files'] as $fileName => $content) {
+            $zip->addFromString($fileName, $content);
+        }
+
+        // Add userscript
+        $zip->addFromString('userscript.js', $clientPackage['userscript']);
+
+        $zip->close();
+
+        // Send ZIP file
+        header('Content-Type: application/zip');
+        header("Content-Disposition: attachment; filename=\"lmarena-client-{$clientId}.zip\"");
+        header('Content-Length: ' . filesize($tempFile));
+
+        readfile($tempFile);
+        unlink($tempFile);
+        exit;
+
+    } catch (Exception $e) {
+        logError('Package download failed', ['error' => $e->getMessage(), 'client_id' => $clientId]);
+        errorResponse('Failed to generate package', 500, 'PACKAGE_GENERATION_ERROR');
+        exit;
+    }
 }
 
 // Register or update a session mapping
@@ -361,7 +565,7 @@ if ($path === '/v1/chat/completions' && $method === 'POST') {
         // Session selection strategy
         $sessionName = trim($_SERVER['HTTP_X_SESSION_NAME'] ?? ($_SERVER['HTTP_X_SESSION_ID'] ?? 'default'));
         $targetDomain = trim($_SERVER['HTTP_X_TARGET_DOMAIN'] ?? 'lmarena.ai');
-        $preferredProvider = trim($_SERVER['HTTP_X_PROVIDER'] ?? 'auto'); // auto, lmarena, yupp2api
+        $preferredProvider = trim($_SERVER['HTTP_X_PROVIDER'] ?? 'auto'); // auto, lmarena, bridge_direct, distributed
 
         if (!validateDomain($targetDomain)) {
             errorResponse('X-Target-Domain not allowed: ' . $targetDomain, 400, 'INVALID_DOMAIN');
@@ -374,30 +578,70 @@ if ($path === '/v1/chat/completions' && $method === 'POST') {
         }
 
         // Provider selection logic
-        $useYupp2Api = false;
-        if ($preferredProvider === 'yupp2api' && $yupp2Api->isEnabled()) {
-            $useYupp2Api = true;
-        } elseif ($preferredProvider === 'auto') {
-            // Auto-select based on model or availability
-            $model = $openaiReq['model'] ?? '';
-            if ($yupp2Api->isEnabled() && (strpos($model, 'yupp2') !== false || strpos($model, 'claude') !== false)) {
-                $useYupp2Api = true;
+        $model = $openaiReq['model'] ?? '';
+
+        // Check if we should use distributed client routing
+        if ($preferredProvider === 'distributed' || $preferredProvider === 'auto') {
+            try {
+                $requiredCapabilities = ['chat'];
+
+                if ($openaiReq['stream'] ?? true) {
+                    // Stream from distributed clients
+                    header('Content-Type: text/event-stream');
+                    header('Cache-Control: no-cache');
+                    header('Connection: keep-alive');
+                    header('X-Accel-Buffering: no');
+
+                    foreach ($requestRouter->streamRequest($openaiReq, $requiredCapabilities) as $chunk) {
+                        echo $chunk;
+                        if (ob_get_level()) {
+                            ob_flush();
+                        }
+                        flush();
+                    }
+                } else {
+                    // Non-streaming request to distributed clients
+                    $result = $requestRouter->routeRequest($openaiReq, $requiredCapabilities);
+
+                    if ($result['success']) {
+                        jsonResponse($result['data']);
+                    } else {
+                        errorResponse($result['error'], 500, $result['error_code'] ?? 'ROUTING_ERROR');
+                    }
+                }
+                exit;
+
+            } catch (Exception $e) {
+                logError('Distributed routing failed, falling back to direct integration', ['error' => $e->getMessage()]);
+                // Fall through to direct integration
             }
         }
 
-        // Route to yupp2Api if selected
-        if ($useYupp2Api) {
+        // Direct LMArenaBridge integration fallback
+        $useBridgeDirect = false;
+        if ($preferredProvider === 'bridge_direct' && $lmarenaBridge->isEnabled()) {
+            $useBridgeDirect = true;
+        } elseif ($preferredProvider === 'auto' && $lmarenaBridge->isEnabled()) {
+            if ($lmarenaBridge->hasModel($model)) {
+                $useBridgeDirect = true;
+            }
+        }
+
+        // Route to direct LMArenaBridge if selected and model is available
+        if ($useBridgeDirect && $lmarenaBridge->hasModel($model)) {
             try {
+                $sessionMapping = $lmarenaBridge->getSessionMapping($model);
+
                 if ($openaiReq['stream'] ?? true) {
-                    $yupp2Api->streamRequest('/v1/chat/completions', $openaiReq);
+                    $lmarenaBridge->streamChatCompletion($openaiReq, $sessionMapping ?: []);
                 } else {
-                    $result = $yupp2Api->forwardRequest('/v1/chat/completions', $openaiReq);
+                    $result = $lmarenaBridge->chatCompletion($openaiReq, $sessionMapping ?: []);
                     jsonResponse($result);
                 }
                 exit;
             } catch (Exception $e) {
-                logError('yupp2Api request failed, falling back to LMArenaBridge', ['error' => $e->getMessage()]);
-                // Fall through to LMArenaBridge
+                logError('Direct LMArenaBridge request failed, falling back to legacy WebSocket bridge', ['error' => $e->getMessage()]);
+                // Fall through to legacy WebSocket LMArenaBridge
             }
         }
 
@@ -773,6 +1017,59 @@ JS;
       json_encode($registerUrl, JSON_UNESCAPED_SLASHES)
     );
     exit;
+}
+
+// OpenAI-compatible models endpoint
+// GET /v1/models
+if ($path === '/v1/models' && $method === 'GET') {
+    try {
+        $models = [];
+
+        // Add models from direct LMArenaBridge integration
+        if ($lmarenaBridge->isEnabled()) {
+            $bridgeModels = $lmarenaBridge->getModels();
+            if (isset($bridgeModels['data'])) {
+                $models = array_merge($models, $bridgeModels['data']);
+            }
+        }
+
+        // Add fallback models for legacy WebSocket bridge
+        $legacyModels = [
+            'gpt-4', 'gpt-4-turbo', 'gpt-3.5-turbo', 'claude-3-opus',
+            'claude-3-sonnet', 'claude-3-haiku', 'gemini-pro'
+        ];
+
+        foreach ($legacyModels as $modelName) {
+            // Only add if not already present from direct bridge
+            $exists = false;
+            foreach ($models as $existingModel) {
+                if ($existingModel['id'] === $modelName) {
+                    $exists = true;
+                    break;
+                }
+            }
+
+            if (!$exists) {
+                $models[] = [
+                    'id' => $modelName,
+                    'object' => 'model',
+                    'created' => time(),
+                    'owned_by' => 'LMArenaBridge-Legacy'
+                ];
+            }
+        }
+
+        jsonResponse([
+            'object' => 'list',
+            'data' => $models
+        ]);
+        exit;
+
+    } catch (Exception $e) {
+        logError('Models endpoint failed', ['error' => $e->getMessage()]);
+        errorResponse('Failed to retrieve models', 500, 'INTERNAL_ERROR');
+        exit;
+    }
 }
 
 // Not found
