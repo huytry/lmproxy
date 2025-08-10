@@ -1,42 +1,200 @@
 # apisix/apisix.yaml
-# Example declarative config for Apache APISIX to front the PHP gateway and protect it
-# Adjust upstream hosts, SSL, and plugins to your environment.
+# Enhanced Apache APISIX configuration for LMArena AI Gateway
+# Includes yupp2Api integration, Flask services, and advanced routing
 
+# Global configuration
+apisix:
+  node_listen: 9080
+  enable_admin: true
+  admin_key:
+    - name: "admin"
+      key: "your-admin-key-here"
+      role: admin
+
+# Upstream definitions
+upstreams:
+  - id: php-gateway
+    name: "PHP Gateway Backend"
+    type: roundrobin
+    nodes:
+      "127.0.0.1:8080": 1  # PHP gateway web server
+    health_checker:
+      active:
+        http_path: "/health"
+        healthy:
+          interval: 10
+          successes: 2
+        unhealthy:
+          interval: 10
+          http_failures: 3
+
+  - id: flask-services
+    name: "Flask Auxiliary Services"
+    type: roundrobin
+    nodes:
+      "127.0.0.1:5104": 1  # Flask services
+    health_checker:
+      active:
+        http_path: "/health"
+        healthy:
+          interval: 15
+          successes: 2
+        unhealthy:
+          interval: 15
+          http_failures: 3
+
+# Route definitions
 routes:
-  - uri: /v1/*
-    name: openai-endpoints
+  # OpenAI-compatible API endpoints with enhanced features
+  - id: openai-api
+    name: "OpenAI Compatible API"
+    uri: /v1/*
     methods: [GET, POST, OPTIONS]
-    upstream:
-      type: roundrobin
-      nodes:
-        127.0.0.1:8080: 1  # PHP gateway web server (Apache/Nginx) listening port
+    upstream_id: php-gateway
     plugins:
-      cors: {}
-  - uri: /session/*
-    name: session-management
-    methods: [GET, POST, OPTIONS]
-    upstream:
-      type: roundrobin
-      nodes:
-        127.0.0.1:8080: 1
-    plugins:
-      cors: {}
-  - uri: /userscript/*
-    name: userscript
-    methods: [GET]
-    upstream:
-      type: roundrobin
-      nodes:
-        127.0.0.1:8080: 1
-    plugins:
-      cors: {}
+      cors:
+        allow_origins: "*"
+        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
+        allow_headers: "Content-Type,Authorization,X-Session-Name,X-Target-Domain,X-Provider"
+        max_age: 86400
+      rate-limit:
+        count: 100
+        time_window: 60
+        rejected_code: 429
+        key: "remote_addr"
+      request-id:
+        include_in_response: true
+      prometheus:
+        prefer_name: true
 
-# Optionally expose a health endpoint
-  - uri: /health
-    name: health
+  # Enhanced session management endpoints
+  - id: session-management
+    name: "Session Management API"
+    uri: /session/*
+    methods: [GET, POST, DELETE, OPTIONS]
+    upstream_id: php-gateway
+    plugins:
+      cors:
+        allow_origins: "*"
+        allow_methods: "GET,POST,DELETE,OPTIONS"
+        allow_headers: "Content-Type,Authorization"
+      rate-limit:
+        count: 200
+        time_window: 60
+        key: "remote_addr"
+      request-validation:
+        body_schema:
+          type: "object"
+          properties:
+            domain:
+              type: "string"
+              pattern: "^[a-z0-9.-]+$"
+            session_name:
+              type: "string"
+              pattern: "^[a-zA-Z0-9_-]+$"
+
+  # Provider status and configuration
+  - id: providers-api
+    name: "Provider Status API"
+    uri: /providers/*
+    methods: [GET, OPTIONS]
+    upstream_id: php-gateway
+    plugins:
+      cors: {}
+      rate-limit:
+        count: 50
+        time_window: 60
+        key: "remote_addr"
+
+  # Analytics endpoints (routed to Flask services)
+  - id: analytics-api
+    name: "Analytics API"
+    uri: /analytics/*
+    methods: [GET, POST, OPTIONS]
+    upstream_id: flask-services
+    plugins:
+      cors: {}
+      key-auth: {}  # Require API key for analytics
+      rate-limit:
+        count: 100
+        time_window: 60
+        key: "consumer_name"
+
+  # Enhanced userscript generation
+  - id: userscript-generator
+    name: "Userscript Generator"
+    uri: /userscript/*
+    methods: [GET, OPTIONS]
+    upstream_id: php-gateway
+    plugins:
+      cors: {}
+      rate-limit:
+        count: 20
+        time_window: 60
+        key: "remote_addr"
+      response-rewrite:
+        headers:
+          "Content-Type": "text/javascript; charset=utf-8"
+          "Cache-Control": "no-cache, no-store, must-revalidate"
+
+  # Advanced userscript generation (Flask services)
+  - id: advanced-userscript
+    name: "Advanced Userscript Generator"
+    uri: /userscript/advanced-generate
+    methods: [GET, OPTIONS]
+    upstream_id: flask-services
+    plugins:
+      cors: {}
+      key-auth: {}  # Require API key for advanced features
+      rate-limit:
+        count: 10
+        time_window: 60
+        key: "consumer_name"
+
+  # Health check endpoint
+  - id: health-check
+    name: "Health Check"
+    uri: /health
     methods: [GET]
-    upstream:
-      type: roundrobin
-      nodes:
-        127.0.0.1:8080: 1
+    upstream_id: php-gateway
+    plugins:
+      prometheus:
+        prefer_name: true
+
+  # Flask services health check
+  - id: flask-health
+    name: "Flask Services Health"
+    uri: /flask/health
+    methods: [GET]
+    upstream_id: flask-services
+
+# Consumer definitions for API key authentication
+consumers:
+  - username: "gateway-admin"
+    plugins:
+      key-auth:
+        key: "admin-api-key-change-this"
+
+  - username: "analytics-user"
+    plugins:
+      key-auth:
+        key: "analytics-api-key-change-this"
+
+# Global rules
+global_rules:
+  - id: "global-rate-limit"
+    plugins:
+      limit-count:
+        count: 1000
+        time_window: 60
+        rejected_code: 429
+        key: "remote_addr"
+        policy: "local"
+
+# Plugin metadata
+plugin_metadata:
+  prometheus:
+    export_addr:
+      ip: "0.0.0.0"
+      port: 9091
 

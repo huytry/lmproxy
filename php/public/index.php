@@ -4,9 +4,11 @@
 
 use GatewayApp\Config;
 use GatewayApp\SessionStore;
+use GatewayApp\Yupp2ApiProvider;
 
 require_once __DIR__ . '/../app/Config.php';
 require_once __DIR__ . '/../app/SessionStore.php';
+require_once __DIR__ . '/../app/Yupp2ApiProvider.php';
 
 // Error reporting for production
 error_reporting(E_ERROR | E_WARNING | E_PARSE);
@@ -68,15 +70,47 @@ function logError(string $message, array $context = []): void {
 
 try {
     $store = new SessionStore();
+    $yupp2Api = new Yupp2ApiProvider();
 } catch (Exception $e) {
-    logError('Failed to initialize session store', ['error' => $e->getMessage()]);
+    logError('Failed to initialize services', ['error' => $e->getMessage()]);
     errorResponse('Service temporarily unavailable', 503, 'STORAGE_ERROR');
     exit;
 }
 
-// Health
+// Health check with provider status
 if ($path === '/health') {
-    jsonResponse(['status' => 'ok', 'time' => gmdate('c')]);
+    $health = [
+        'status' => 'ok',
+        'time' => gmdate('c'),
+        'services' => [
+            'session_store' => 'healthy',
+            'yupp2_api' => $yupp2Api->isEnabled() ? 'enabled' : 'disabled'
+        ]
+    ];
+
+    // Check yupp2Api health if enabled
+    if ($yupp2Api->isEnabled()) {
+        $yupp2Health = $yupp2Api->healthCheck();
+        $health['services']['yupp2_api'] = $yupp2Health['status'];
+        $health['yupp2_api_details'] = $yupp2Health;
+    }
+
+    jsonResponse($health);
+    exit;
+}
+
+// Provider status endpoint
+if ($path === '/providers/status' && $method === 'GET') {
+    $providers = [
+        'lmarena_bridge' => [
+            'enabled' => true,
+            'base_url' => Config::defaultBridgeBaseUrl(),
+            'has_api_key' => !empty(Config::defaultBridgeApiKey())
+        ],
+        'yupp2_api' => $yupp2Api->getConfig()
+    ];
+
+    jsonResponse($providers);
     exit;
 }
 
@@ -196,6 +230,68 @@ if (preg_match('#^/session/([^/]+)/([^/]+)$#', $path, $matches) && $method === '
     }
 }
 
+// Session heartbeat endpoint
+if ($path === '/session/heartbeat' && $method === 'POST') {
+    try {
+        $data = getJsonBody();
+        $domain = trim($data['domain'] ?? '');
+        $sessionName = trim($data['session_name'] ?? '');
+
+        if (!$domain || !$sessionName) {
+            errorResponse('domain and session_name are required', 400, 'MISSING_FIELDS');
+            exit;
+        }
+
+        if (!validateDomain($domain)) {
+            errorResponse('unsupported domain: ' . $domain, 400, 'INVALID_DOMAIN');
+            exit;
+        }
+
+        // Update session timestamp
+        $mapping = $store->getMapping($domain, $sessionName);
+        if ($mapping) {
+            $mapping['last_heartbeat'] = gmdate('c');
+            $store->setMapping($domain, $sessionName, $mapping);
+            jsonResponse(['status' => 'heartbeat_recorded', 'timestamp' => $mapping['last_heartbeat']]);
+        } else {
+            errorResponse('Session not found', 404, 'SESSION_NOT_FOUND');
+        }
+        exit;
+
+    } catch (Exception $e) {
+        logError('Session heartbeat failed', ['error' => $e->getMessage()]);
+        errorResponse('Failed to record heartbeat', 500, 'INTERNAL_ERROR');
+        exit;
+    }
+}
+
+// Analytics event endpoint
+if ($path === '/analytics/event' && $method === 'POST') {
+    try {
+        $data = getJsonBody();
+        $sessionName = trim($data['session_name'] ?? '');
+        $domain = trim($data['domain'] ?? '');
+        $event = trim($data['event'] ?? '');
+
+        if (!$sessionName || !$domain || !$event) {
+            errorResponse('session_name, domain, and event are required', 400, 'MISSING_FIELDS');
+            exit;
+        }
+
+        // Log analytics event (could be enhanced to store in database)
+        $timestamp = gmdate('Y-m-d H:i:s');
+        error_log("[$timestamp] Analytics: $domain/$sessionName - $event: " . json_encode($data));
+
+        jsonResponse(['status' => 'event_recorded', 'timestamp' => gmdate('c')]);
+        exit;
+
+    } catch (Exception $e) {
+        logError('Analytics event failed', ['error' => $e->getMessage()]);
+        errorResponse('Failed to record event', 500, 'INTERNAL_ERROR');
+        exit;
+    }
+}
+
 // Helper function for proxying requests to LMArenaBridge
 function proxyToBridge(string $endpoint, array $openaiReq, array $mapping, bool $isStream = true): void {
     $bridgeBase = $mapping['bridge_base_url'] ?? Config::defaultBridgeBaseUrl();
@@ -256,7 +352,7 @@ function proxyToBridge(string $endpoint, array $openaiReq, array $mapping, bool 
     curl_close($ch);
 }
 
-// OpenAI-compatible passthrough to LMArenaBridge
+// OpenAI-compatible passthrough with provider routing
 // POST /v1/chat/completions
 if ($path === '/v1/chat/completions' && $method === 'POST') {
     try {
@@ -265,6 +361,7 @@ if ($path === '/v1/chat/completions' && $method === 'POST') {
         // Session selection strategy
         $sessionName = trim($_SERVER['HTTP_X_SESSION_NAME'] ?? ($_SERVER['HTTP_X_SESSION_ID'] ?? 'default'));
         $targetDomain = trim($_SERVER['HTTP_X_TARGET_DOMAIN'] ?? 'lmarena.ai');
+        $preferredProvider = trim($_SERVER['HTTP_X_PROVIDER'] ?? 'auto'); // auto, lmarena, yupp2api
 
         if (!validateDomain($targetDomain)) {
             errorResponse('X-Target-Domain not allowed: ' . $targetDomain, 400, 'INVALID_DOMAIN');
@@ -274,6 +371,34 @@ if ($path === '/v1/chat/completions' && $method === 'POST') {
         if (!validateSessionName($sessionName)) {
             errorResponse('X-Session-Name invalid format', 400, 'INVALID_SESSION_NAME');
             exit;
+        }
+
+        // Provider selection logic
+        $useYupp2Api = false;
+        if ($preferredProvider === 'yupp2api' && $yupp2Api->isEnabled()) {
+            $useYupp2Api = true;
+        } elseif ($preferredProvider === 'auto') {
+            // Auto-select based on model or availability
+            $model = $openaiReq['model'] ?? '';
+            if ($yupp2Api->isEnabled() && (strpos($model, 'yupp2') !== false || strpos($model, 'claude') !== false)) {
+                $useYupp2Api = true;
+            }
+        }
+
+        // Route to yupp2Api if selected
+        if ($useYupp2Api) {
+            try {
+                if ($openaiReq['stream'] ?? true) {
+                    $yupp2Api->streamRequest('/v1/chat/completions', $openaiReq);
+                } else {
+                    $result = $yupp2Api->forwardRequest('/v1/chat/completions', $openaiReq);
+                    jsonResponse($result);
+                }
+                exit;
+            } catch (Exception $e) {
+                logError('yupp2Api request failed, falling back to LMArenaBridge', ['error' => $e->getMessage()]);
+                // Fall through to LMArenaBridge
+            }
         }
 
         $mapping = $store->getMapping($targetDomain, $sessionName);
