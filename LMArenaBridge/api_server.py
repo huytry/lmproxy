@@ -18,6 +18,7 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 import requests
+import socket
 from packaging.version import parse as parse_version
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -116,7 +117,7 @@ def download_and_extract_update(version):
         import io
         with zipfile.ZipFile(io.BytesIO(response.content)) as z:
             z.extractall(update_dir)
-        
+
         logger.info(f"新版本已成功下载并解压到 '{update_dir}' 文件夹。")
         return True
     except requests.RequestException as e:
@@ -125,11 +126,15 @@ def download_and_extract_update(version):
         logger.error("下载的文件不是一个有效的zip压缩包。")
     except Exception as e:
         logger.error(f"解压更新时发生未知错误: {e}")
-    
+
     return False
 
 def check_for_updates():
     """从 GitHub 检查新版本。"""
+    # 允许通过环境变量强制禁用自动更新，便于容器/测试环境运行
+    if os.getenv("LM_BRIDGE_DISABLE_AUTO_UPDATE", "0").lower() in ("1", "true", "yes"):
+        logger.info("检测到环境变量已禁用自动更新 (LM_BRIDGE_DISABLE_AUTO_UPDATE)。跳过检查。")
+        return
     if not CONFIG.get("enable_auto_update", True):
         logger.info("自动更新已禁用，跳过检查。")
         return
@@ -146,7 +151,7 @@ def check_for_updates():
         json_content = re.sub(r'//.*', '', jsonc_content)
         json_content = re.sub(r'/\*.*?\*/', '', json_content, flags=re.DOTALL)
         remote_config = json.loads(json_content)
-        
+
         remote_version_str = remote_config.get("version")
         if not remote_version_str:
             logger.warning("远程配置文件中未找到版本号，跳过更新检查。")
@@ -160,7 +165,8 @@ def check_for_updates():
             if download_and_extract_update(remote_version_str):
                 logger.info("准备应用更新。服务器将在5秒后关闭并启动更新脚本。")
                 time.sleep(5)
-                update_script_path = os.path.join("modules", "update_script.py")
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                update_script_path = os.path.join(base_dir, "modules", "update_script.py")
                 # 使用 Popen 启动独立进程
                 subprocess.Popen([sys.executable, update_script_path])
                 # 优雅地退出当前服务器进程
@@ -185,18 +191,18 @@ def extract_models_from_html(html_content):
     """
     models = []
     model_names = set()
-    
+
     # 查找所有可能的模型JSON对象的起始位置
     for start_match in re.finditer(r'\{\\"id\\":\\"[a-f0-9-]+\\"', html_content):
         start_index = start_match.start()
-        
+
         # 从起始位置开始，进行花括号匹配
         open_braces = 0
         end_index = -1
-        
+
         # 优化：设置一个合理的搜索上限，避免无限循环
         search_limit = start_index + 10000 # 假设一个模型定义不会超过10000个字符
-        
+
         for i in range(start_index, min(len(html_content), search_limit)):
             if html_content[i] == '{':
                 open_braces += 1
@@ -205,18 +211,18 @@ def extract_models_from_html(html_content):
                 if open_braces == 0:
                     end_index = i + 1
                     break
-        
+
         if end_index != -1:
             # 提取完整的、转义的JSON字符串
             json_string_escaped = html_content[start_index:end_index]
-            
+
             # 反转义
             json_string = json_string_escaped.replace('\\"', '"').replace('\\\\', '\\')
-            
+
             try:
                 model_data = json.loads(json_string)
                 model_name = model_data.get('publicName')
-                
+
                 # 使用publicName去重
                 if model_name and model_name not in model_names:
                     models.append(model_data)
@@ -237,7 +243,7 @@ def save_available_models(new_models_list, models_path="available_models.json"):
     将提取到的完整模型对象列表保存到指定的JSON文件中。
     """
     logger.info(f"检测到 {len(new_models_list)} 个模型，正在更新 '{models_path}'...")
-    
+
     try:
         with open(models_path, 'w', encoding='utf-8') as f:
             # 直接将完整的模型对象列表写入文件
@@ -252,7 +258,7 @@ def restart_server():
     logger.warning("="*60)
     logger.warning("检测到服务器空闲超时，准备自动重启...")
     logger.warning("="*60)
-    
+
     # 1. (异步) 通知浏览器刷新
     async def notify_browser_refresh():
         if browser_ws:
@@ -262,15 +268,15 @@ def restart_server():
                 logger.info("已向浏览器发送 'reconnect' 指令。")
             except Exception as e:
                 logger.error(f"发送 'reconnect' 指令失败: {e}")
-    
+
     # 在主事件循环中运行异步通知函数
     # 使用`asyncio.run_coroutine_threadsafe`确保线程安全
     if browser_ws and browser_ws.client_state.name == 'CONNECTED' and main_event_loop:
         asyncio.run_coroutine_threadsafe(notify_browser_refresh(), main_event_loop)
-    
+
     # 2. 延迟几秒以确保消息发送
     time.sleep(3)
-    
+
     # 3. 执行重启
     logger.info("正在重启服务器...")
     os.execv(sys.executable, ['python'] + sys.argv)
@@ -278,29 +284,29 @@ def restart_server():
 def idle_monitor():
     """在后台线程中运行，监控服务器是否空闲。"""
     global last_activity_time
-    
+
     # 等待，直到 last_activity_time 被首次设置
     while last_activity_time is None:
         time.sleep(1)
-        
+
     logger.info("空闲监控线程已启动。")
-    
+
     while True:
         if CONFIG.get("enable_idle_restart", False):
             timeout = CONFIG.get("idle_restart_timeout_seconds", 300)
-            
+
             # 如果超时设置为-1，则禁用重启检查
             if timeout == -1:
                 time.sleep(10) # 仍然需要休眠以避免繁忙循环
                 continue
 
             idle_time = (datetime.now() - last_activity_time).total_seconds()
-            
+
             if idle_time > timeout:
                 logger.info(f"服务器空闲时间 ({idle_time:.0f}s) 已超过阈值 ({timeout}s)。")
                 restart_server()
                 break # 退出循环，因为进程即将被替换
-                
+
         # 每 10 秒检查一次
         time.sleep(10)
 
@@ -311,7 +317,7 @@ async def lifespan(app: FastAPI):
     global idle_monitor_thread, last_activity_time, main_event_loop
     main_event_loop = asyncio.get_running_loop() # 获取主事件循环
     load_config() # 首先加载配置
-    
+
     # --- 打印当前的操作模式 ---
     mode = CONFIG.get("id_updater_last_mode", "direct_chat")
     target = CONFIG.get("id_updater_battle_target", "A")
@@ -329,12 +335,12 @@ async def lifespan(app: FastAPI):
 
     # 在模型更新后，标记活动时间的起点
     last_activity_time = datetime.now()
-    
+
     # 启动空闲监控线程
     if CONFIG.get("enable_idle_restart", False):
         idle_monitor_thread = threading.Thread(target=idle_monitor, daemon=True)
         idle_monitor_thread.start()
-        
+
     # --- 初始化自定义模块 ---
     image_generation.initialize_image_module(
         app_logger=logger,
@@ -359,6 +365,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# --- 健康检查端点 ---
+@app.get("/health")
+async def health():
+    """简易健康检查，供容器/反向代理探测。"""
+    return {"status": "ok", "time": datetime.utcnow().isoformat() + "Z"}
+
 # --- 辅助函数 ---
 def save_config():
     """将当前的 CONFIG 对象写回 config.jsonc 文件，保留注释。"""
@@ -381,7 +393,7 @@ def save_config():
         content_str = "".join(lines)
         content_str = replacer("session_id", CONFIG["session_id"], content_str)
         content_str = replacer("message_id", CONFIG["message_id"], content_str)
-        
+
         with open('config.jsonc', 'w', encoding='utf-8') as f:
             f.write(content_str)
         logger.info("✅ 成功将会话信息更新到 config.jsonc。")
@@ -402,7 +414,7 @@ def _process_openai_message(message: dict) -> dict:
     text_content = ""
 
     if isinstance(content, list):
-        
+
         text_parts = []
         for part in content:
             if part.get("type") == "text":
@@ -418,7 +430,7 @@ def _process_openai_message(message: dict) -> dict:
                 if url and url.startswith("data:"):
                     try:
                         content_type = url.split(';')[0].split(':')[1]
-                        
+
                         # 如果客户端提供了原始文件名，直接使用它
                         if original_filename and isinstance(original_filename, str):
                             file_name = original_filename
@@ -426,17 +438,17 @@ def _process_openai_message(message: dict) -> dict:
                         else:
                             # 否则，回退到旧的、基于UUID的命名逻辑
                             main_type, sub_type = content_type.split('/') if '/' in content_type else ('application', 'octet-stream')
-                            
+
                             if main_type == "image": prefix = "image"
                             elif main_type == "audio": prefix = "audio"
                             else: prefix = "file"
-                            
+
                             guessed_extension = mimetypes.guess_extension(content_type)
                             if guessed_extension:
                                 file_extension = guessed_extension.lstrip('.')
                             else:
                                 file_extension = sub_type if len(sub_type) < 20 else 'bin'
-                            
+
                             file_name = f"{prefix}_{uuid.uuid4()}.{file_extension}"
                             logger.info(f"成功处理一个附件 (生成文件名): {file_name}")
 
@@ -452,7 +464,7 @@ def _process_openai_message(message: dict) -> dict:
     elif isinstance(content, str):
         text_content = content
 
-    
+
     if role == "user" and not text_content.strip():
         text_content = " "
 
@@ -475,21 +487,21 @@ def convert_openai_to_lmarena_payload(openai_data: dict, session_id: str, messag
         if msg.get("role") == "developer":
             msg["role"] = "system"
             logger.info("消息角色规范化：将 'developer' 转换为 'system'。")
-            
+
     processed_messages = [_process_openai_message(msg.copy()) for msg in messages]
 
     # 2. 应用酒馆模式 (Tavern Mode)
     if CONFIG.get("tavern_mode_enabled"):
         system_prompts = [msg['content'] for msg in processed_messages if msg['role'] == 'system']
         other_messages = [msg for msg in processed_messages if msg['role'] != 'system']
-        
+
         merged_system_prompt = "\n\n".join(system_prompts)
         final_messages = []
-        
+
         if merged_system_prompt:
             # 系统消息不应有附件
             final_messages.append({"role": "system", "content": merged_system_prompt, "attachments": []})
-        
+
         final_messages.extend(other_messages)
         processed_messages = final_messages
 
@@ -617,7 +629,7 @@ async def _process_lmarena_stream(request_id: str):
             # 1. 检查来自 WebSocket 端的直接错误或终止信号
             if isinstance(raw_data, dict) and 'error' in raw_data:
                 error_msg = raw_data.get('error', 'Unknown browser error')
-                
+
                 # 增强错误处理
                 if isinstance(error_msg, str):
                     # 1. 检查 413 附件过大错误
@@ -657,7 +669,7 @@ async def _process_lmarena_stream(request_id: str):
                         logger.error(f"PROCESSOR [ID: {request_id[:8]}]: 发送刷新指令失败: {e}")
                 yield 'error', error_msg
                 return
-            
+
             if (error_match := error_pattern.search(buffer)):
                 try:
                     error_json = json.loads(error_match.group(1))
@@ -690,7 +702,7 @@ async def stream_generator(request_id: str, model: str):
     """将内部事件流格式化为 OpenAI SSE 响应。"""
     response_id = f"chatcmpl-{uuid.uuid4()}"
     logger.info(f"STREAMER [ID: {request_id[:8]}]: 流式生成器启动。")
-    
+
     finish_reason_to_send = 'stop'  # 默认的结束原因
 
     async for event_type, data in _process_lmarena_stream(request_id):
@@ -716,10 +728,10 @@ async def non_stream_response(request_id: str, model: str):
     """聚合内部事件流并返回单个 OpenAI JSON 响应。"""
     response_id = f"chatcmpl-{uuid.uuid4()}"
     logger.info(f"NON-STREAM [ID: {request_id[:8]}]: 开始处理非流式响应。")
-    
+
     full_content = []
     finish_reason = "stop"
-    
+
     async for event_type, data in _process_lmarena_stream(request_id):
         if event_type == 'content':
             full_content.append(data)
@@ -730,7 +742,7 @@ async def non_stream_response(request_id: str, model: str):
             # 不要在这里 break，继续等待来自浏览器的 [DONE] 信号，以避免竞态条件
         elif event_type == 'error':
             logger.error(f"NON-STREAM [ID: {request_id[:8]}]: 处理时发生错误: {data}")
-            
+
             # 统一流式和非流式响应的错误状态码
             status_code = 413 if "附件大小超过了" in str(data) else 500
 
@@ -745,7 +757,7 @@ async def non_stream_response(request_id: str, model: str):
 
     final_content = "".join(full_content)
     response_data = format_openai_non_stream_response(final_content, model, response_id, reason=finish_reason)
-    
+
     logger.info(f"NON-STREAM [ID: {request_id[:8]}]: 响应聚合完成。")
     return Response(content=json.dumps(response_data, ensure_ascii=False), media_type="application/json")
 
@@ -764,7 +776,7 @@ async def websocket_endpoint(websocket: WebSocket):
             # 等待并接收来自油猴脚本的消息
             message_str = await websocket.receive_text()
             message = json.loads(message_str)
-            
+
             request_id = message.get("request_id")
             data = message.get("data")
 
@@ -799,12 +811,12 @@ async def get_models():
             status_code=404,
             content={"error": "模型列表为空或 'models.json' 未找到。"}
         )
-    
+
     return {
         "object": "list",
         "data": [
             {
-                "id": model_name, 
+                "id": model_name,
                 "object": "model",
                 "created": int(time.time()),
                 "owned_by": "LMArenaBridge"
@@ -822,7 +834,7 @@ async def request_model_update():
     if not browser_ws:
         logger.warning("MODEL UPDATE: 收到更新请求，但没有浏览器连接。")
         raise HTTPException(status_code=503, detail="Browser client not connected.")
-    
+
     try:
         logger.info("MODEL UPDATE: 收到更新请求，正在通过 WebSocket 发送指令...")
         await browser_ws.send_text(json.dumps({"command": "send_page_source"}))
@@ -844,10 +856,10 @@ async def update_available_models_endpoint(request: Request):
             status_code=400,
             content={"status": "error", "message": "No HTML content received."}
         )
-    
+
     logger.info("收到来自油猴脚本的页面内容，开始提取可用模型...")
     new_models_list = extract_models_from_html(html_content.decode('utf-8'))
-    
+
     if new_models_list:
         save_available_models(new_models_list)
         return JSONResponse({"status": "success", "message": "Available models file updated."})
@@ -880,7 +892,7 @@ async def chat_completions(request: Request):
                 status_code=401,
                 detail="未提供 API Key。请在 Authorization 头部中以 'Bearer YOUR_KEY' 格式提供。"
             )
-        
+
         provided_key = auth_header.split(' ')[1]
         if provided_key != api_key:
             raise HTTPException(
@@ -911,7 +923,7 @@ async def chat_completions(request: Request):
         elif isinstance(mapping_entry, dict):
             selected_mapping = mapping_entry
             logger.info(f"为模型 '{model_name}' 找到了单个端点映射（旧格式）。")
-        
+
         if selected_mapping:
             session_id = selected_mapping.get("session_id")
             message_id = selected_mapping.get("message_id")
@@ -964,13 +976,13 @@ async def chat_completions(request: Request):
             mode_override=mode_override,
             battle_target_override=battle_target_override
         )
-        
+
         # 2. 包装成发送给浏览器的消息
         message_to_browser = {
             "request_id": request_id,
             "payload": lmarena_payload
         }
-        
+
         # 3. 通过 WebSocket 发送
         logger.info(f"API CALL [ID: {request_id[:8]}]: 正在通过 WebSocket 发送载荷到油猴脚本。")
         await browser_ws.send_text(json.dumps(message_to_browser))
@@ -1003,10 +1015,10 @@ async def images_generations(request: Request):
     global last_activity_time
     last_activity_time = datetime.now()
     logger.info(f"文生图 API 请求已收到，活动时间已更新为: {last_activity_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    
+
     # 模块已经通过 `initialize_image_module` 初始化，可以直接调用
     response_data, status_code = await image_generation.handle_image_generation_request(request, browser_ws)
-    
+
     return JSONResponse(content=response_data, status_code=status_code)
 
 # --- 内部通信端点 ---
@@ -1019,7 +1031,7 @@ async def start_id_capture():
     if not browser_ws:
         logger.warning("ID CAPTURE: 收到激活请求，但没有浏览器连接。")
         raise HTTPException(status_code=503, detail="Browser client not connected.")
-    
+
     try:
         logger.info("ID CAPTURE: 收到激活请求，正在通过 WebSocket 发送指令...")
         await browser_ws.send_text(json.dumps({"command": "activate_id_capture"}))
@@ -1032,10 +1044,47 @@ async def start_id_capture():
 
 # --- 主程序入口 ---
 if __name__ == "__main__":
-    # 建议从 config.jsonc 中读取端口，此处为临时硬编码
-    api_port = 5102
-    logger.info(f"🚀 LMArena Bridge v2.0 API 服务器正在启动...")
-    logger.info(f"   - 监听地址: http://127.0.0.1:{api_port}")
-    logger.info(f"   - WebSocket 端点: ws://127.0.0.1:{api_port}/ws")
-    
-    uvicorn.run(app, host="0.0.0.0", port=api_port)
+    # 端口与主机优先读取环境变量，其次读取配置，最后回退到默认值
+    default_host = "0.0.0.0"
+    default_port = 5102
+
+    env_host = os.getenv("LM_ARENA_BRIDGE_HOST")
+    env_port = os.getenv("LM_ARENA_BRIDGE_PORT")
+
+    cfg_host = CONFIG.get("server_host") if isinstance(CONFIG, dict) else None
+    cfg_port = CONFIG.get("server_port") if isinstance(CONFIG, dict) else None
+
+    host = (env_host or cfg_host or default_host)
+    try:
+        port = int(env_port or cfg_port or default_port)
+    except Exception:
+        port = default_port
+
+    # 如果端口被占用，尝试自动偏移端口（最多向上探测 10 次）
+    def _is_port_free(h: str, p: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind((h, p))
+                return True
+            except OSError:
+                return False
+
+    base_port = port
+    max_tries = 10
+    if not _is_port_free("127.0.0.1", port) and host in ("0.0.0.0", "127.0.0.1", "localhost"):
+        for i in range(1, max_tries + 1):
+            test_port = base_port + i
+            if _is_port_free("127.0.0.1", test_port):
+                logger.warning(f"端口 {base_port} 已被占用，自动切换到可用端口 {test_port}")
+                port = test_port
+                break
+        else:
+            logger.error(f"端口 {base_port} 连续 {max_tries} 个偏移端口均不可用，请释放端口或设置 LM_ARENA_BRIDGE_PORT。")
+            raise SystemExit(1)
+
+    logger.info("🚀 LMArena Bridge v2.0 API 服务器正在启动...")
+    logger.info(f"   - 监听地址: http://127.0.0.1:{port}")
+    logger.info(f"   - WebSocket 端点: ws://127.0.0.1:{port}/ws")
+
+    uvicorn.run(app, host=host, port=port)
