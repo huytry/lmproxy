@@ -165,7 +165,8 @@ def check_for_updates():
             if download_and_extract_update(remote_version_str):
                 logger.info("准备应用更新。服务器将在5秒后关闭并启动更新脚本。")
                 time.sleep(5)
-                update_script_path = os.path.join("modules", "update_script.py")
+                base_dir = os.path.dirname(os.path.abspath(__file__))
+                update_script_path = os.path.join(base_dir, "modules", "update_script.py")
                 # 使用 Popen 启动独立进程
                 subprocess.Popen([sys.executable, update_script_path])
                 # 优雅地退出当前服务器进程
